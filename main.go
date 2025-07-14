@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"regexp"
 )
 
 type ViaCEPResponse struct {
 	Localidade string `json:"localidade"`
 	Estado     string `json:"estado"`
+	Erro       bool   `json:"erro"`
 }
 
 type WeatherAPIResponse struct {
@@ -20,55 +21,50 @@ type WeatherAPIResponse struct {
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Uso: go run main.go <CEP> <WEATHER_API_KEY>")
+	http.HandleFunc("/clima", climaHandler)
+	fmt.Println("Servidor rodando na porta 8080...")
+	http.ListenAndServe(":8080", nil)
+}
+
+func climaHandler(w http.ResponseWriter, r *http.Request) {
+	cep := r.URL.Query().Get("cep")
+	apiKey := r.URL.Query().Get("apiKey")
+
+	// Validação do CEP (sempre 8 dígitos numéricos)
+	if !regexp.MustCompile(`^\d{8}$`).MatchString(cep) {
+		http.Error(w, `{"message": "invalid zipcode"}`, http.StatusUnprocessableEntity)
 		return
 	}
-
-	cep := os.Args[1]
-	apiKey := os.Args[2]
 
 	// Consulta ViaCEP
 	viaCEPurl := fmt.Sprintf("https://viacep.com.br/ws/%s/json/", cep)
 	resp, err := http.Get(viaCEPurl)
 	if err != nil {
-		fmt.Println("Erro ao consultar ViaCEP:", err)
+		http.Error(w, `{"message": "erro ao consultar ViaCEP"}`, http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Erro ao ler o corpo da resposta: %v\n", err)
-		return
-	}
-
+	body, _ := io.ReadAll(resp.Body)
 	var cepData ViaCEPResponse
-	if err := json.Unmarshal(bodyBytes, &cepData); err != nil {
-		fmt.Println("Erro ao decodificar JSON do ViaCEP:", err)
+	if err := json.Unmarshal(body, &cepData); err != nil || cepData.Erro {
+		http.Error(w, `{"message": "can not find zipcode"}`, http.StatusInternalServerError)
 		return
 	}
-
-	fmt.Printf("Localidade: %s, %s\n", cepData.Localidade, cepData.Estado)
 
 	// Consulta WeatherAPI
 	weatherAPIurl := fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", apiKey, cepData.Localidade)
 	resp, err = http.Get(weatherAPIurl)
 	if err != nil {
-		fmt.Println("Erro ao consultar WeatherAPI:", err)
+		http.Error(w, `{"message": "erro ao consultar WeatherAPI"}`, http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err = io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Erro ao ler o corpo da resposta: %v\n", err)
-		return
-	}
-
+	body, _ = io.ReadAll(resp.Body)
 	var weatherData WeatherAPIResponse
-	if err := json.Unmarshal(bodyBytes, &weatherData); err != nil {
-		fmt.Println("Erro ao decodificar JSON do WeatherAPI:", err)
+	if err := json.Unmarshal(body, &weatherData); err != nil {
+		http.Error(w, `{"message": "erro ao processar dados do clima"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -76,7 +72,12 @@ func main() {
 	tempF := tempC*1.8 + 32 // Conversão de Celsius para Fahrenheit
 	tempK := tempC + 273    // Conversão de Celsius para Kelvin
 
-	fmt.Printf("Temperatura atual em %s: %.1f°C\n", cepData.Localidade, tempC)
-	fmt.Printf("Temperatura atual em Fahrenheit: %.1f°F\n", tempF)
-	fmt.Printf("Temperatura atual em Kelvin: %.1fK\n", tempK)
+	// Resposta JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]float64{
+		"tempC": tempC,
+		"tempF": tempF,
+		"tempK": tempK,
+	})
 }
