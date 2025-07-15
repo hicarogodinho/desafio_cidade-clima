@@ -18,8 +18,6 @@ COPY --from=build /app /app
 
 CMD ["/app"]
 
-# WORKDIR /app
-
 # FROM golang:1.21-alpine
 
 # WORKDIR /app
