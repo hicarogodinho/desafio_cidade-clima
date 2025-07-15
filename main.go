@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 )
 
@@ -36,7 +37,12 @@ type WeatherAPIResponse struct {
 func main() {
 	http.HandleFunc("/clima", climaHandler)
 	fmt.Println("Servidor rodando na porta 8080...")
-	http.ListenAndServe(":8080", nil)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	http.ListenAndServe(":"+port, nil)
+	// http.ListenAndServe(":8080", nil)
 }
 
 var (
