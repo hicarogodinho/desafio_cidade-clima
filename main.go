@@ -9,9 +9,22 @@ import (
 )
 
 type ViaCEPResponse struct {
-	Localidade string `json:"localidade"`
-	Estado     string `json:"estado"`
-	Erro       bool   `json:"erro"`
+	Localidade string          `json:"localidade"`
+	Estado     string          `json:"estado"`
+	Erro       json.RawMessage `json:"erro,omitempty"`
+}
+
+func (v ViaCEPResponse) isErro() bool {
+	if v.Erro == nil {
+		return false
+	}
+
+	var b bool
+	if err := json.Unmarshal(v.Erro, &b); err == nil {
+		return b
+	}
+
+	return false
 }
 
 type WeatherAPIResponse struct {
@@ -26,6 +39,11 @@ func main() {
 	http.ListenAndServe(":8080", nil)
 }
 
+var (
+	viaCEPurlBase     = "https://viacep.com.br/ws/"
+	weatherAPIurlBase = "https://api.weatherapi.com/v1/current.json"
+)
+
 func climaHandler(w http.ResponseWriter, r *http.Request) {
 	cep := r.URL.Query().Get("cep")
 	apiKey := r.URL.Query().Get("apiKey")
@@ -37,7 +55,8 @@ func climaHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Consulta ViaCEP
-	viaCEPurl := fmt.Sprintf("https://viacep.com.br/ws/%s/json/", cep)
+	// viaCEPurl := fmt.Sprintf("https://viacep.com.br/ws/%s/json/", cep)
+	viaCEPurl := fmt.Sprintf("%s%s/json/", viaCEPurlBase, cep)
 	resp, err := http.Get(viaCEPurl)
 	if err != nil {
 		http.Error(w, `{"message": "erro ao consultar ViaCEP"}`, http.StatusInternalServerError)
@@ -45,15 +64,27 @@ func climaHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, `{"message": "can not find zipcode"}`, http.StatusNotFound)
+		return
+	}
+
 	body, _ := io.ReadAll(resp.Body)
 	var cepData ViaCEPResponse
-	if err := json.Unmarshal(body, &cepData); err != nil || cepData.Erro {
-		http.Error(w, `{"message": "can not find zipcode"}`, http.StatusInternalServerError)
+
+	if err := json.Unmarshal(body, &cepData); err != nil {
+		http.Error(w, `{"message": "erro ao processar resposta do ViaCEP"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if cepData.isErro() || cepData.Localidade == "" {
+		http.Error(w, `{"message": "can not find zipcode"}`, http.StatusNotFound)
 		return
 	}
 
 	// Consulta WeatherAPI
-	weatherAPIurl := fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", apiKey, cepData.Localidade)
+	// weatherAPIurl := fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", apiKey, cepData.Localidade)
+	weatherAPIurl := fmt.Sprintf("%s?key=%s&q=%s", weatherAPIurlBase, apiKey, cepData.Localidade)
 	resp, err = http.Get(weatherAPIurl)
 	if err != nil {
 		http.Error(w, `{"message": "erro ao consultar WeatherAPI"}`, http.StatusInternalServerError)

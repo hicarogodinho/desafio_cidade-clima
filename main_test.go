@@ -1,47 +1,125 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func TestClimaHandler(t *testing.T) {
-	apiKey := "ff4e9f3ecf62466396a141841251407"
+func fakeViaCEPAndWeatherAPI() *httptest.Server {
+	mux := http.NewServeMux()
 
-	tests := []struct {
-		name           string
-		cep            string
-		expectedStatus int
-	}{
-		{
-			name:           "CEP válido",
-			cep:            "58700070",
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "CEP inválido",
-			cep:            "38750", // menos de 8 dígitos
-			expectedStatus: http.StatusUnprocessableEntity,
-		},
-		{
-			name:           "CEP inexistente",
-			cep:            "00000000", // CEP que não existe
-			expectedStatus: http.StatusNotFound,
-		},
-	}
+	// ViaCEP devolve "TesteCity"
+	mux.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
+		// _ = r.URL.Path
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		cep := ""
+		if len(parts) >= 2 {
+			cep = parts[1]
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/clima?cep="+tt.cep+"&apiKey="+apiKey, nil)
+		if cep == "00000000" { // Simula CEP inexistente
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"erro": true,
+			})
+			return
+		}
 
-			w := httptest.NewRecorder()
-			climaHandler(w, req)
-
-			resp := w.Result()
-			if resp.StatusCode != tt.expectedStatus {
-				t.Errorf("handler retornou o status %v, esperado %v", resp.StatusCode, tt.expectedStatus)
-			}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"localidade": "TesteCity",
 		})
-	}
+	})
+
+	// WeatherAPI devolve "10"
+	mux.HandleFunc("/v1/current.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"current": map[string]interface{}{
+				"temp_c": 10,
+			},
+		})
+	})
+
+	return httptest.NewServer(mux)
+}
+
+func TestClimaHandler(t *testing.T) {
+	t.Run("sucesso 200", func(t *testing.T) {
+		ts := fakeViaCEPAndWeatherAPI()
+		defer ts.Close()
+
+		viaCEPurlBase = ts.URL + "/ws/"
+		weatherAPIurlBase = ts.URL + "/v1/current.json"
+
+		req := httptest.NewRequest("GET", "/clima?cep=12345678&apiKey=fake", nil)
+		w := httptest.NewRecorder()
+		climaHandler(w, req)
+		resp := w.Result()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status %d, esperado 200", resp.StatusCode)
+		}
+
+		var body map[string]float64
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("body inválido: %v", err)
+		}
+
+		want := map[string]float64{
+			"tempC": 10,
+			"tempF": 10*1.8 + 32,
+			"tempK": 10 + 273,
+		}
+
+		for k, v := range want {
+			if body[k] != v {
+				t.Errorf("%s = %v, esperado %v", k, body[k], v)
+			}
+		}
+	})
+
+	t.Run("CEP inválido 422", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/clima?cep=12345&apiKey=fake", nil) // CEP < 8 dígitos
+		w := httptest.NewRecorder()
+		climaHandler(w, req)
+		resp := w.Result()
+
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("status %d, esperado 422", resp.StatusCode)
+		}
+
+		var body struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("body inválido: %v", err)
+		}
+		if body.Message != "invalid zipcode" {
+			t.Errorf("mensagem = %q, esperada %q", body.Message, "invalid zipcode")
+		}
+	})
+
+	t.Run("CEP não encontrado 404", func(t *testing.T) {
+		ts := fakeViaCEPAndWeatherAPI()
+		defer ts.Close()
+
+		viaCEPurlBase = ts.URL + "/ws/"
+		weatherAPIurlBase = ts.URL + "/v1/current.json"
+
+		req := httptest.NewRequest("GET", "/clima?cep=00000000&apiKey=fake", nil) // CEP inexistente
+		w := httptest.NewRecorder()
+		climaHandler(w, req)
+		resp := w.Result()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("status %d, esperado 404", resp.StatusCode)
+		}
+
+		var body struct{ Message string }
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		if body.Message != "can not find zipcode" {
+			t.Errorf("mensagem = %q, esperada %q", body.Message, "can not find zipcode")
+		}
+	})
 }
