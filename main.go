@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -35,13 +36,14 @@ type WeatherAPIResponse struct {
 }
 
 func main() {
-	http.HandleFunc("/clima", climaHandler)
-	fmt.Println("Servidor rodando na porta 8080...")
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	http.ListenAndServe(":"+port, nil)
+
+	http.HandleFunc("/clima", climaHandler)
+	log.Printf("Servidor rodando na porta %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 	// http.ListenAndServe(":8080", nil)
 }
 
