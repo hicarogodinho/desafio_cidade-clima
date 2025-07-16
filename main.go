@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 )
@@ -92,7 +93,9 @@ func climaHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Consulta WeatherAPI
 	// weatherAPIurl := fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", apiKey, cepData.Localidade)
-	weatherAPIurl := fmt.Sprintf("%s?key=%s&q=%s", weatherAPIurlBase, apiKey, cepData.Localidade)
+	escapedCity := url.QueryEscape(cepData.Localidade)
+	weatherAPIurl := fmt.Sprintf("%s?key=%s&q=%s", weatherAPIurlBase, apiKey, escapedCity)
+	fmt.Println("URL da requisição WeatherAPI:", weatherAPIurl)
 	resp, err = http.Get(weatherAPIurl)
 	if err != nil {
 		http.Error(w, `{"message": "erro ao consultar WeatherAPI"}`, http.StatusInternalServerError)
